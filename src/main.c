@@ -59,7 +59,6 @@ static void handle_status_request(void)
     pid_t pids[PROCESS_MANAGER_CHILD_COUNT];
     const char *states[PROCESS_MANAGER_CHILD_COUNT];
 
-    signal_manager_clear_status_request();
 
     size_t count = process_manager_get_status(
         pids,
@@ -182,14 +181,22 @@ int main(void)
         }
 
         /* SIGUSR1 geldiyse durum raporu olustur */
-        if (signal_manager_status_requested())
+        int status_request = signal_manager_take_status_request();
+
+        if (status_request == -1)
+        {
+            perror("signal_manager_take_status_request");
+            exit_status = EXIT_FAILURE;
+            break;
+        }
+
+        if (status_request == 1)
         {
             handle_status_request();
         }
 
         sleep_briefly();
     }
-
 shutdown:
 
     /* 5. Guvenli kapatma */

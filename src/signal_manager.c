@@ -32,9 +32,10 @@ int signal_manager_install(void)
     if (sigemptyset(&action.sa_mask) == -1)
         return -1;
 
-    sigaddset(&action.sa_mask, SIGINT);
-    sigaddset(&action.sa_mask, SIGTERM);
-    sigaddset(&action.sa_mask, SIGUSR1);
+    if (sigaddset(&action.sa_mask, SIGINT) == -1 ||
+        sigaddset(&action.sa_mask, SIGTERM) == -1 ||
+        sigaddset(&action.sa_mask, SIGUSR1) == -1)
+        return -1;
 
     action.sa_flags = 0;
 
@@ -57,15 +58,26 @@ int signal_manager_shutdown_requested(void)
 }
 
 
-/* Durum raporu istegi kontrolu */
-int signal_manager_status_requested(void)
+/* Durum istegini guvenli sekilde alir ve sifirlar */
+int signal_manager_take_status_request(void)
 {
-    return status_requested;
-}
+    sigset_t block_set;
+    sigset_t old_set;
 
-/* Islenen durum raporu istegini temizler */
-void signal_manager_clear_status_request(void)
-{
+    if (sigemptyset(&block_set) == -1)
+        return -1;
+
+    if (sigaddset(&block_set, SIGUSR1) == -1)
+        return -1;
+
+    if (sigprocmask(SIG_BLOCK, &block_set, &old_set) == -1)
+        return -1;
+
+    int requested = status_requested;
     status_requested = 0;
-}
 
+    if (sigprocmask(SIG_SETMASK, &old_set, NULL) == -1)
+        return -1;
+
+    return requested;
+}
