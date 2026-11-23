@@ -1,6 +1,8 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+
 #include "signal_manager.h"
 
 int main(void)
@@ -16,10 +18,17 @@ int main(void)
 
     while (!signal_manager_shutdown_requested())
     {
-        if (signal_manager_status_requested())
+        int status = signal_manager_take_status_request();
+
+        if (status == -1)
+        {
+            perror("Status request failed");
+            return EXIT_FAILURE;
+        }
+
+        if (status == 1)
         {
             printf("SIGUSR1 received!\n");
-            signal_manager_clear_status_request();
         }
 
         sleep(1);
