@@ -84,6 +84,13 @@ static int install_handlers(void)
     return 0;
 }
 
+static void stop_periodic_timer(void)
+{
+    struct itimerval disabled;
+    memset(&disabled, 0, sizeof(disabled));   /* zero it_value disarms the timer */
+    (void)setitimer(ITIMER_REAL, &disabled, NULL);
+}
+
 static int start_periodic_timer(void)
 {
     struct itimerval timer;
@@ -95,11 +102,36 @@ static int start_periodic_timer(void)
 
 /* ---- worker creation ---- */
 
+/* Child-side fatal error: write a short message (async-signal-safe) and leave. */
+static void child_fail(const char *message, size_t length)
+{
+    ssize_t written = write(STDERR_FILENO, message, length);
+    (void)written;
+    _exit(127);
+}
+
 static int spawn_worker(worker_t *worker)
 {
+    /* Block SIGTERM BEFORE fork(). The child is then created with SIGTERM
+       already blocked, so there is no window in which a shutdown SIGTERM could
+       reach it before it is ready (it would hit the inherited watchdog handler
+       and be lost, or kill the worker). In the parent the signal simply stays
+       pending until we restore the mask right after fork(). */
+    sigset_t block_term, previous_mask;
+    sigemptyset(&block_term);
+    sigaddset(&block_term, SIGTERM);
+    if (sigprocmask(SIG_BLOCK, &block_term, &previous_mask) == -1) {
+        log_msg("Worker %d sigprocmask failed: %s", worker->id, strerror(errno));
+        worker->pid = 0;
+        worker->state = WORKER_FAILED;
+        return -1;
+    }
+
     pid_t child = fork();
     if (child == -1) {
-        log_msg("Worker %d fork failed: %s", worker->id, strerror(errno));
+        int saved_errno = errno;
+        (void)sigprocmask(SIG_SETMASK, &previous_mask, NULL);
+        log_msg("Worker %d fork failed: %s", worker->id, strerror(saved_errno));
         worker->pid = 0;
         worker->state = WORKER_FAILED;
         return -1;
@@ -107,17 +139,20 @@ static int spawn_worker(worker_t *worker)
     if (child == 0) {
         /* Own process group: a terminal Ctrl+C (SIGINT to the whole foreground
            group) must reach only the watchdog, which then shuts workers down
-           with SIGTERM -> SIGKILL. */
-        (void)setpgid(0, 0);
+           with SIGTERM -> SIGKILL. Without it the worker would die by SIGINT,
+           so a failure here is fatal for this worker. */
+        if (setpgid(0, 0) == -1) {
+            static const char msg[] = "worker setpgid failed\n";
+            child_fail(msg, sizeof(msg) - 1);
+        }
 
-        /* Keep ONLY SIGTERM blocked across exec(). The mask survives exec, so a
-           shutdown SIGTERM that arrives while the worker is still starting is
-           held pending instead of killing it before its handler exists. The
-           worker unblocks SIGTERM right after installing its handler. */
-        sigset_t start_mask;
-        sigemptyset(&start_mask);
-        sigaddset(&start_mask, SIGTERM);
-        (void)sigprocmask(SIG_SETMASK, &start_mask, NULL);
+        /* Keep ONLY SIGTERM blocked (it already is, inherited from the parent)
+           and let it survive exec(): the worker unblocks it right after
+           installing its own handler. */
+        if (sigprocmask(SIG_SETMASK, &block_term, NULL) == -1) {
+            static const char msg[] = "worker sigprocmask failed\n";
+            child_fail(msg, sizeof(msg) - 1);
+        }
 
         /* Workers must not run the parent's handlers. */
         const int signals[] = {SIGCHLD, SIGALRM, SIGUSR1, SIGINT, SIGTERM};
@@ -133,11 +168,14 @@ static int spawn_worker(worker_t *worker)
         execl("./worker", "worker", "--id", id, (char *)NULL);
 
         /* Reached only if execl failed. */
-        const char msg[] = "worker exec failed\n";
-        ssize_t written = write(STDERR_FILENO, msg, sizeof(msg) - 1);
-        (void)written;
-        _exit(127);
+        static const char msg[] = "worker exec failed\n";
+        child_fail(msg, sizeof(msg) - 1);
     }
+
+    /* Parent: restore the original mask; a SIGTERM that arrived meanwhile is
+       delivered to the watchdog's own handler now. */
+    (void)sigprocmask(SIG_SETMASK, &previous_mask, NULL);
+
     worker->pid = child;
     worker->state = WORKER_RUNNING;
     log_msg("Worker %d started PID=%ld restart_count=%d", worker->id,
@@ -249,7 +287,8 @@ static void periodic_check(void)
 
 void process_manager_handle_events(void)
 {
-    if (child_event) {
+    /* During shutdown the periodic timer is stopped, so always reap here. */
+    if (child_event || shutting_down) {
         child_event = 0;       /* clear BEFORE reaping: a new SIGCHLD re-sets it */
         reap_children();
     }
@@ -277,6 +316,8 @@ void process_manager_begin_shutdown(void)
 {
     if (shutting_down) return;
     shutting_down = true;
+    stop_periodic_timer();   /* no periodic checks needed while shutting down */
+    timer_event = 0;
     log_msg("Shutdown requested; sending SIGTERM to all running workers");
     for (int i = 0; i < PROCESS_MANAGER_CHILD_COUNT; ++i) {
         if (workers[i].pid > 0) {
