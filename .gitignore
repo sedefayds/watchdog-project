@@ -1,0 +1,4 @@
+build/
+watchdog
+worker
+watchdog.log
