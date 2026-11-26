@@ -1,0 +1,22 @@
+[2026-11-26 10:12:38] Watchdog started
+[2026-11-26 10:12:38] Worker 1 started PID=599 restart_count=0
+[2026-11-26 10:12:38] Worker 2 started PID=600 restart_count=0
+[2026-11-26 10:12:56] STATUS REPORT begin (2 workers)
+[2026-11-26 10:12:56] STATUS worker[0] pid=599 state=RUNNING
+[2026-11-26 10:12:56] STATUS worker[1] pid=600 state=RUNNING
+[2026-11-26 10:12:56] STATUS REPORT end
+[2026-11-26 10:12:56] Status report generated after SIGUSR1
+[2026-11-26 10:13:04] Worker 1 PID=599 terminated by signal=9
+[2026-11-26 10:13:04] Worker 1 unexpected termination; restart attempt=1/3
+[2026-11-26 10:13:04] Worker 1 started PID=606 restart_count=1
+[2026-11-26 10:13:23] STATUS REPORT begin (2 workers)
+[2026-11-26 10:13:23] STATUS worker[0] pid=606 state=RUNNING
+[2026-11-26 10:13:23] STATUS worker[1] pid=600 state=RUNNING
+[2026-11-26 10:13:23] STATUS REPORT end
+[2026-11-26 10:13:23] Status report generated after SIGUSR1
+[2026-11-26 10:13:36] Shutdown initiated
+[2026-11-26 10:13:36] Shutdown requested; sending SIGTERM to all running workers
+[2026-11-26 10:13:36] Worker 2 PID=600 exited code=0
+[2026-11-26 10:13:36] Worker 1 PID=606 exited code=0
+[2026-11-26 10:13:36] All child processes stopped
+[2026-11-26 10:13:36] Watchdog stopped
